@@ -8,7 +8,8 @@ clear;clc;
 % model properties
 m   = 1;    % mass of body;
 r0  = 1;    % initial length of leg
-k   = 800;  % stiffness of spring 
+k   = 800;  % stiffness of spring
+b   = 0;    % damping of spring was 8
 g   = 9.8;  % gravity
 
 dx_dsr = 2; % desired forward velocity ( m/s)
@@ -39,7 +40,8 @@ T = t_start;  % one column
 Q = q0.';     % five columns 
 P = q0(5)*angle_td+(1-q0(5))*x_td; % store angle or touchdown position 
 % animation setting
-flag=1;
+flag=1;       % enable 1 || disable 0
+flag_e=0;
 %% Simulation
 while(t_latest<t_max)
     
@@ -52,7 +54,7 @@ while(t_latest<t_max)
         options = odeset('Events',@(t,q) Event_Flight(t,q,r0,angle_td), ...
                     'MaxStep', t_step);
         % solve the dynamic equations
-        [t,q,te,qe,ie] = ode45(@(t,q) Dynamics(q,r0,m,g,k,x_td), tspan, q0, options);
+        [t,q,te,qe,ie] = ode45(@(t,q) Dynamics(q,r0,m,g,k,x_td,b), tspan, q0, options);
 %         [t,q,te,qe,ie] = ode45(@(t,q) FlightDynamics(q,g), tspan, q0, options);
         % Record data
         T = [T; t];
@@ -67,7 +69,7 @@ while(t_latest<t_max)
             x_td=qe(1)+qe(3)*tan(angle_td); 
         %   q0=Flight2Stance(q_end,angle_td);
             q0(5)=0;
-            display('switch to stance  phase');
+            disp('switch to stance  phase');
         else
             break;
         end
@@ -77,7 +79,7 @@ while(t_latest<t_max)
          options = odeset('Events',@(t,q) Event_Stance(t,q,r0,x_td), ...
                     'MaxStep', t_step);
         % solve the dynamic equations
-        [t,q,te,qe,ie] = ode45(@(t,q) Dynamics(q,r0,m,g,k,x_td), tspan, q0, options);
+        [t,q,te,qe,ie] = ode45(@(t,q) Dynamics(q,r0,m,g,k,x_td,b), tspan, q0, options);
 %         [t,q,te,qe,ie] = ode45(@(t,q) StanceDynamics(q,r0,m,g,k,x_td), tspan, q0, options);
         % Record data
         T = [T; t];
@@ -90,11 +92,11 @@ while(t_latest<t_max)
             t_latest = te;
             q0=qe;
     %         q0=Stance2Flight(q_end,x_td);
-            % previous stance time
+            % stance time
             t_stance = t_lo-t_td;
-            % foot placement
+            % foot placement in next loop
             x_ft = q0(2)*t_stance/2 + K_raibert*(q0(2)-dx_dsr);
-            % touch down angle
+            % next touch down angle
             angle_td = asin(x_ft/r0);
             if angle_td > theta_max
                 angle_td = theta_max;
@@ -102,14 +104,36 @@ while(t_latest<t_max)
                 angle_td = -theta_max;
             end
             q0(5)=1;
-            display('switch to flight  phase');
+            disp('switch to flight  phase');
         else
             break;
         end
     end
      
 end
-
+%% Plot Energy
+if flag_e
+M=size(T,1);
+Ek=[];
+Ep=[];
+for j=1:M
+    Ek=[Ek;0.5*m*(Q(j,2).^2+Q(j,4).^2)];
+    
+    if Q(j,5)
+        r=r0;
+    else
+        r=sqrt(Q(j,3).^2+(Q(j,1)-P(j))^2);
+    end
+    Ep=[Ep;m*g*Q(j,3)+0.5*k*(r-r0)^2];
+end
+plot(T,Ek);
+hold on;
+plot(T,Ep);
+hold on
+plot(T,Ek+Ep);
+hold on
+legend('Ek','Ep','E');
+end
 %% Animation
 if flag
 V = VideoWriter('Passive SLIP.avi');
@@ -118,14 +142,14 @@ open(V);
 
 f=figure(1);
 subplot(1,2,1);
-title('\fontsize{12}\fontname{Arial Black}SLIP Animation (2D)');
+title('\fontsize{10}\fontname{Arial Black}SLIP Animation (2D)');
 
 subplot(1,2,2);
 h=animatedline;
-title('\fontsize{12}\fontname{Arial Black}State ');
+title('\fontsize{10}\fontname{Arial Black}State ');
 xlabel("y (m)");
-ylabel("dydy (m/s)");
-axis([0.9 1.25 -2.5 2.5]);
+ylabel("dydt (m/s)");
+axis([0.5 1.5 -4 4]);
 axis square;
 hold on;
 
@@ -187,7 +211,7 @@ end
 %         -g];
 % end
 
-function dq=Dynamics(q,r0,m,g,k,x_td)
+function dq=Dynamics(q,r0,m,g,k,x_td,b)
     if(q(5))
         r=r0;
     else
@@ -195,9 +219,9 @@ function dq=Dynamics(q,r0,m,g,k,x_td)
     end
     % q = [x;xdot;y;ydot] in Cartisian coordinate
     dq = [q(2);
-          (q(1)-x_td)*k*(1 - (r/r0))/m;
+          (q(1)-x_td)*k*((r0/r)-1)/m;       % CoM > touchdown position : accelerate
           q(4);
-          q(3)*k*(1 - (r/r0))/m-g;
+          q(3)*k*((r0/r)-1)/m-g;
           0];
 end
 % % function dq=StanceDynamics(q,r0,m,g,k)
