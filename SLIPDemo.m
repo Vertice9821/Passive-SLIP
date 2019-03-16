@@ -7,109 +7,96 @@
 clear;clc;
 % model properties
 m   = 1;    % mass of body;
-r0  = 1;    % initial length of leg
-k   = 800;  % stiffness of spring
-b   = 0;    % damping of spring was 8
+r0  = 0.8;    % initial length of leg
+k   = 1500;  % stiffness of spring
 g   = 9.8;  % gravity
 
-dx_dsr = 2; % desired forward velocity ( m/s)
-y_dsr = 1;% desired height ( meter )
+dx_dsr = 1; % desired forward velocity ( m/s)
 K_raibert = 0.02; % raibert controller velocity gain
-theta_max = pi/6;
+theta_max = pi/8;
 
 % initiate model state
-  x_td = 0;   % touchdown position
-  angle_td = 0;  % touchdown angel
 % in flight phase using Cartisian coordinate
-  y0=y_dsr+dx_dsr^2/2/g;
   q0=[0;      % x horizontal position
-     0;       % dx horizontal velocity
-     y0;      % y vertical position
+     0;     % dx horizontal velocity
+     1;     % y vertical position
      0;       % dy vertical velocity
-     1];      % phase flight = 1 || stance = 0
+     0;       % phase flight = 0 || stance = 1
+     0;       % x_td     touch down position 
+     0];      % angle_td touch down angle from the vertical line
 
 % time setting
 t_start=0;    % start time
-t_max=8;     % time at end of the simulation 
+t_max=8;      % end of the simulation 
 t_latest=t_start; % the beginning of each loop
 t_step=1e-2;  % maximum step in ode45
 t_td=0;       % touchdown time
 t_lo=0;       % lift off time 
 % output 
 T = t_start;  % one column
-Q = q0.';     % five columns 
-P = q0(5)*angle_td+(1-q0(5))*x_td; % store angle or touchdown position 
+Q = q0.';     % seven columns 
 % animation setting
-flag=1;       % enable 1 || disable 0
-flag_e=0;
+flag=0;       % enable 1 || disable 0
+flag_e=~flag;
 %% Simulation
+% set event function for ode45
+  options = odeset('Events',@(t,q) Event(t,q,r0), ...
+                    'MaxStep', t_step);
+                
 while(t_latest<t_max)
     
     tspan=[t_latest,t_max];
-    
-    
+
     if(q0(5))
-        % flight phase = true 
-        % set event function for ode45        
-        options = odeset('Events',@(t,q) Event_Flight(t,q,r0,angle_td), ...
-                    'MaxStep', t_step);
-        % solve the dynamic equations
-        [t,q,te,qe,ie] = ode45(@(t,q) Dynamics(q,r0,m,g,k,x_td,b), tspan, q0, options);
-%         [t,q,te,qe,ie] = ode45(@(t,q) FlightDynamics(q,g), tspan, q0, options);
-        % Record data
-        T = [T; t];
-        Q = [Q; q]; 
-        p=ones(size(t,1),1).*(q0(5)*angle_td+(1-q0(5))*x_td);
-        P = [P;p]; 
-        % Update state
-        if(size(ie,1))
-            t_td=te+t_latest;
-            t_latest = te;
-            q0=qe;
-            x_td=qe(1)+qe(3)*tan(angle_td); 
-        %   q0=Flight2Stance(q_end,angle_td);
-            q0(5)=0;
-            disp('switch to stance  phase');
-        else
-            break;
-        end
-    else
         % stance phase 
-        % set event function for ode45
-         options = odeset('Events',@(t,q) Event_Stance(t,q,r0,x_td), ...
-                    'MaxStep', t_step);
         % solve the dynamic equations
-        [t,q,te,qe,ie] = ode45(@(t,q) Dynamics(q,r0,m,g,k,x_td,b), tspan, q0, options);
-%         [t,q,te,qe,ie] = ode45(@(t,q) StanceDynamics(q,r0,m,g,k,x_td), tspan, q0, options);
+        [t,q,te,qe,ie] = ode45(@(t,q) Dynamics(q,r0,m,g,k), tspan, q0, options);
         % Record data
         T = [T; t];
-        Q = [Q; q]; 
-        p=ones(size(t,1),1).*(q0(5)*angle_td+(1-q0(5))*x_td);
-        P = [P;p];
-        % Update state
+        Q = [Q; q];
+        % Update state at lift off
         if(ie)
-            t_lo=te+t_latest;
-            t_latest = te;
-            q0=qe;
-    %         q0=Stance2Flight(q_end,x_td);
+            t_lo=te+t_latest;  % lift off time w.r.t. the whole time span
+            t_latest = te;     % beginning of the next loop
+            q0=qe;             
             % stance time
             t_stance = t_lo-t_td;
             % foot placement in next loop
             x_ft = q0(2)*t_stance/2 + K_raibert*(q0(2)-dx_dsr);
             % next touch down angle
             angle_td = asin(x_ft/r0);
-            if angle_td > theta_max
-                angle_td = theta_max;
-            elseif angle_td < -theta_max
-                angle_td = -theta_max;
+             if abs(angle_td) > theta_max
+                angle_td = sign(angle_td)*theta_max;
             end
-            q0(5)=1;
+            q0(7)=angle_td;             % record touch down angle 
+            q0(6)=0;                    % clear touch down position
+            q0(5)=0;                   
             disp('switch to flight  phase');
+        else
+            break;            
+        end     
+    else
+        % flight phase 
+        % solve the dynamic equations
+        [t,q,te,qe,ie] = ode45(@(t,q) Dynamics(q,r0,m,g,k), tspan, q0, options);
+        % Record data
+        T = [T; t];
+        Q = [Q; q]; 
+        % Update state at touch down
+        if(size(ie,1))
+            t_td=te+t_latest;
+            t_latest = te;
+            q0=qe;
+            x_td=qe(1)+qe(3)*tan(qe(7)); 
+            q0(6)=x_td;        % record touch down position
+            q0(7)=0;           % clear touch down angle
+            q0(5)=1;
+            disp('switch to stance  phase');
         else
             break;
         end
     end
-     
+        
 end
 %% Plot Energy
 if flag_e
@@ -119,10 +106,10 @@ Ep=[];
 for j=1:M
     Ek=[Ek;0.5*m*(Q(j,2).^2+Q(j,4).^2)];
     
-    if Q(j,5)
+    if ~Q(j,5)
         r=r0;
     else
-        r=sqrt(Q(j,3).^2+(Q(j,1)-P(j))^2);
+        r=sqrt(Q(j,3).^2+(Q(j,1)-Q(j,6))^2);
     end
     Ep=[Ep;m*g*Q(j,3)+0.5*k*(r-r0)^2];
 end
@@ -156,10 +143,10 @@ hold on;
 N=size(T,1);
 for i=1:N
     hip=[Q(i,1);Q(i,3)];
-    if(Q(i,5))
-        toe=hip+r0*[sin(P(i)); -cos(P(i))];
+    if(~Q(i,5))
+        toe=hip+r0*[sin(Q(i,7)); -cos(Q(i,7))];
     else
-        toe=[P(i);0];
+        toe=[Q(i,6);0];
     end
     figure(f);
     subplot(1,2,1);
@@ -186,67 +173,41 @@ for i=1:N
 end
 close(V);
 end
-% plot(Q(:,3),Q(:,4));
-% function xp=Flight2Stance(x,angle_td)
-% % transform from Cartisian to Polar
-% 
-%     r = x(3)/cos(angle_td);
-%     xp = [ r ; angle_td;
-%       -x(2)*sin(angle_td) + x(4)*cos(angle_td);
-%       -(x(2)*cos(angle_td) + x(4)*sin(angle_td))/r;];
-% end
-% 
-% function x=Stance2Flight(xp,x_td)
-%     x = [ x_td-xp(1)*sin(xp(3));...
-%           xp(1)*cos(xp(3)); ...
-%           -xp(2)*sin(xp(3)) - xp(1)*xp(4)*cos(xp(3)); ...
-%           xp(2)*cos(xp(3)) - xp(1)*xp(4)*sin(xp(3))];
-% end
 
-% function dq=FlightDynamics(q,g)
-%      % q = [x;xdot;y;ydot] in Cartisian coordinate
-%     dq=[q(2);
-%         0;
-%         q(4);
-%         -g];
-% end
-
-function dq=Dynamics(q,r0,m,g,k,x_td,b)
-    if(q(5))
-        r=r0;
-    else
-        r=sqrt((q(1)-x_td)^2+q(3)^2);
+function dq=Dynamics(q,r0,m,g,k)
+    
+    if(~q(5))  % in flight phase
+        Fx=0;
+        Fy=0;
+    else       % in stance phase
+        r=sqrt((q(1)-q(6))^2+q(3)^2);
+        s=(q(1)-q(6))/r;       % sin(theta) 
+        c=q(3)/r;             % cos(theta)  
+        F_spring=k*(r0-r);
+        Fx=F_spring*s;
+        Fy=F_spring*c;
     end
-    % q = [x;xdot;y;ydot] in Cartisian coordinate
+    % q = [x;xdot;y;ydot;phase] in Cartisian coordinate
     dq = [q(2);
-          (q(1)-x_td)*k*((r0/r)-1)/m;       % CoM > touchdown position : accelerate
+          Fx/m;       % CoM > touchdown position : accelerate
           q(4);
-          q(3)*k*((r0/r)-1)/m-g;
+          Fy/m-g;
+          0;
+          0;
           0];
 end
-% % function dq=StanceDynamics(q,r0,m,g,k)
-% %      % q = [r;rdot;theta;theta_dot] in polar coordinate
-% %      dq = [q(2);
-% %            k*(r0-q(1))/m+q(1)*q(4)^2-g*cos(q(3));
-% %            q(4);
-% %            g*sin(q(3))/q(1)-2*q(2)*q(4)/q(1)];
-% % end
 
-function [zeroCrossing,isterminal,direction] = Event_Stance(t,q,r0,x_td)
-    r=sqrt((q(1)-x_td)^2+q(3)^2);
-    liftoff = r-r0;
+function [zeroCrossing,isterminal,direction] = Event(t,q,r0)
+    if(q(5))
+        r=sqrt((q(1)-q(6))^2+q(3)^2);
+        liftoff = r-r0;
+        zeroCrossing = liftoff; 
+    else
+        thouchdown=r0*cos(q(7))-q(3);
+        zeroCrossing = thouchdown;
+    end
     % Locate the time when height passes through zero in a 
     % decreasing direction and stop integration.
-    zeroCrossing = liftoff; 
-    isterminal   = 1;             
-    direction    = 1;
-end
-
-function [zeroCrossing,isterminal,direction] = Event_Flight(t,q,r0,theta)
-    touchdown    = r0*cos(theta) - q(3);
-    % Locate the time when height passes through zero in a 
-    % decreasing direction and stop integration.
-    zeroCrossing = touchdown; 
     isterminal   = 1;             
     direction    = 1;
 end
